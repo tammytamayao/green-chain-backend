@@ -1,0 +1,21 @@
+[project]
+name = "green-chain-backend"
+version = "0.1.0"
+description = "Flutter + Flask backend"
+authors = [
+    {name = "tammytamayao",email = "tammytamayao@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "flask (>=3.1.2,<4.0.0)",
+    "flask-cors (>=6.0.1,<7.0.0)"
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.flask]
+app = "app:create_app"
