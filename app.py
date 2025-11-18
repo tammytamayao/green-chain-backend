@@ -142,13 +142,17 @@ def create_app():
             farm_name = (data.get("farm_name") or "").strip()
             farm_location = (data.get("farm_location") or "").strip()
             if not farm_name or not farm_location:
-                return jsonify({"error": "farm_name and farm_location are required for farmer"}), 400
+                return jsonify(
+                    {"error": "farm_name and farm_location are required for farmer"}
+                ), 400
 
         elif utype == "disposer":
             entity = (data.get("entity") or "").strip()
             business = (data.get("business") or "").strip()
             if not entity or not business:
-                return jsonify({"error": "entity and business are required for disposer"}), 400
+                return jsonify(
+                    {"error": "entity and business are required for disposer"}
+                ), 400
 
         elif utype == "driver":
             license_id = (data.get("license_id") or "").strip()
@@ -157,14 +161,18 @@ def create_app():
 
             vehicles = data.get("vehicles") or []
             if not isinstance(vehicles, list) or len(vehicles) == 0:
-                return jsonify({"error": "vehicles must be a non-empty list for driver"}), 400
+                return jsonify(
+                    {"error": "vehicles must be a non-empty list for driver"}
+                ), 400
             # basic validation of each vehicle
             for v in vehicles:
                 if not all(
                     isinstance(v.get(k, ""), str) and v.get(k, "").strip()
                     for k in ("model", "class", "plate_number")
                 ):
-                    return jsonify({"error": "vehicle requires model, class, plate_number"}), 400
+                    return jsonify(
+                        {"error": "vehicle requires model, class, plate_number"}
+                    ), 400
 
         # Insert user
         conn = get_db()
@@ -257,24 +265,71 @@ def create_app():
 
     @app.get("/me")
     def me():
+        """
+        Returns full profile info including role-specific fields and vehicles.
+        """
         user_id, _ = auth_user(request)
         if not user_id:
             return jsonify({"error": "unauthorized"}), 401
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""
-            SELECT id, username, first_name, last_name, contact_number, type
-            FROM users WHERE id = ?;
-        """, (user_id,))
+
+        # Fetch all scalar profile fields
+        cur.execute(
+            """
+            SELECT
+                id,
+                username,
+                first_name,
+                last_name,
+                contact_number,
+                type,
+                farm_name,
+                farm_location,
+                entity,
+                business,
+                license_id
+            FROM users
+            WHERE id = ?;
+            """,
+            (user_id,),
+        )
         row = cur.fetchone()
-        conn.close()
 
         if not row:
+            conn.close()
             return jsonify({"error": "not found"}), 404
 
-        return jsonify(dict(row))
+        user = dict(row)
 
+        # Attach vehicles if driver
+        if user["type"] == "driver":
+            cur.execute(
+                """
+                SELECT
+                    model,
+                    class,
+                    plate_number
+                FROM vehicles
+                WHERE user_id = ?;
+                """,
+                (user_id,),
+            )
+            vehicles = [
+                {
+                    "model": v["model"],
+                    "class": v["class"],
+                    "plate_number": v["plate_number"],
+                }
+                for v in cur.fetchall()
+            ]
+            user["vehicles"] = vehicles
+        else:
+            user["vehicles"] = []
+
+        conn.close()
+        return jsonify(user)
 
     # ---- protected todos ----
     @app.get("/todos")
@@ -322,7 +377,10 @@ def create_app():
             (todo_id, user_id),
         )
         conn.commit()
-        cur.execute("SELECT id, title, done FROM todos WHERE id = ? AND user_id = ?;", (todo_id, user_id))
+        cur.execute(
+            "SELECT id, title, done FROM todos WHERE id = ? AND user_id = ?;",
+            (todo_id, user_id),
+        )
         row = cur.fetchone()
         conn.close()
         if not row:
