@@ -54,17 +54,57 @@ def init_db():
         """
     )
 
-    # Products (generic catalog of what can be supplied / demanded)
+    # Products: id, name, variant, current_price
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             variant TEXT NOT NULL,
-            type TEXT NOT NULL,
-            freshness TEXT NOT NULL,
-            class TEXT NOT NULL,
-            size TEXT NOT NULL
+            current_price REAL
+        );
+        """
+    )
+
+    # Supplies: id, weight, farmer_id (FK), product_id (FK)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            farmer_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            FOREIGN KEY(farmer_id) REFERENCES users(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # Demands: id, weight, stall_id (FK), product_id (FK)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            stall_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            FOREIGN KEY(stall_id) REFERENCES stalls(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # Requests: id, price, method, supply_id (FK), demand_id (FK)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            price REAL NOT NULL,
+            method TEXT NOT NULL,
+            supply_id INTEGER NOT NULL,
+            demand_id INTEGER NOT NULL,
+            FOREIGN KEY(supply_id) REFERENCES supplies(id),
+            FOREIGN KEY(demand_id) REFERENCES demands(id)
         );
         """
     )
@@ -83,45 +123,20 @@ def init_db():
         """
     )
 
-    # Supplies (offers from farmers for a given product)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS supplies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            weight REAL NOT NULL,
-            price REAL NOT NULL,
-            farmer_id INTEGER NOT NULL,
-            product_id INTEGER NOT NULL,
-            FOREIGN KEY(farmer_id) REFERENCES users(id),
-            FOREIGN KEY(product_id) REFERENCES products(id)
-        );
-        """
-    )
-
-    # Demands (requests from stalls for a given product)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS demands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            weight REAL NOT NULL,
-            price REAL NOT NULL,
-            stall_id INTEGER NOT NULL,
-            product_id INTEGER NOT NULL,
-            FOREIGN KEY(stall_id) REFERENCES stalls(id),
-            FOREIGN KEY(product_id) REFERENCES products(id)
-        );
-        """
-    )
-
-    # Stall inventory (current stock per stall & product)
+    # Stall inventory:
+    # id, stocks, size, type, freshness, class, product_id (FK), stall_id (FK)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS stall_inventory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            stall_id INTEGER NOT NULL,
+            stocks REAL NOT NULL DEFAULT 0,
+            size TEXT NOT NULL,
+            type TEXT NOT NULL,
+            freshness TEXT NOT NULL,
+            class TEXT NOT NULL,
             product_id INTEGER NOT NULL,
-            stock REAL NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL,
+            stall_id INTEGER NOT NULL,
+            FOREIGN KEY(product_id) REFERENCES products(id),
             FOREIGN KEY(stall_id) REFERENCES stalls(id),
             UNIQUE(stall_id, product_id)
         );
