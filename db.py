@@ -22,7 +22,7 @@ def init_db():
             first_name TEXT NOT NULL,
             last_name TEXT NOT NULL,
             contact_number TEXT NOT NULL,
-            type TEXT NOT NULL CHECK (type IN ('farmer','disposer','driver')),
+            type TEXT NOT NULL CHECK (type IN ('farmer','disposer','driver','admin','consumer')),
 
             -- farmer
             farm_name TEXT,
@@ -34,6 +34,13 @@ def init_db():
 
             -- driver
             license_id TEXT,
+
+            -- admin
+            email TEXT,
+            organization TEXT,
+
+            -- consumer
+            address TEXT,
 
             created_at INTEGER NOT NULL
         );

@@ -9,6 +9,25 @@ user_bp = Blueprint("user", __name__)
 def me():
     """
     Returns full profile info including role-specific fields and vehicles.
+
+    Fields (depending on type):
+      Common:
+        id, username, first_name, last_name, contact_number, type
+
+      Farmer:
+        farm_name, farm_location
+
+      Disposer:
+        business, location
+
+      Driver:
+        license_id, vehicles[]
+
+      Admin:
+        email, organization
+
+      Consumer:
+        address
     """
     user_id, _ = auth_user(request)
     if not user_id:
@@ -31,7 +50,10 @@ def me():
             farm_location,
             business,
             location,
-            license_id
+            license_id,
+            email,
+            organization,
+            address
         FROM users
         WHERE id = ?;
         """,

@@ -9,14 +9,18 @@ from auth_utils import issue_token
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
+
 @auth_bp.post("/register")
 def register():
     """
     Body (general):
       first_name, last_name, contact_number, username, password, type
-    Farmer  : + farm_name, farm_location
-    Disposer: + business, location
-    Driver  : + license_id, vehicles: [{model, class, plate_number}, ...]
+
+    Farmer   : + farm_name, farm_location
+    Disposer : + business, location
+    Driver   : + license_id, vehicles: [{model, class, plate_number}, ...]
+    Admin    : + email, organization
+    Consumer : + address
     """
     data = request.get_json(silent=True) or {}
 
@@ -30,11 +34,12 @@ def register():
 
     if not all([first_name, last_name, contact_number, username, password, utype]):
         return jsonify({"error": "all fields are required"}), 400
-    if utype not in ("farmer", "disposer", "driver"):
+    if utype not in ("farmer", "disposer", "driver", "admin", "consumer"):
         return jsonify({"error": "invalid type"}), 400
 
     # Type-specific
     farm_name = farm_location = business = location = license_id = None
+    email = organization = address = None
     vehicles = []
 
     if utype == "farmer":
@@ -73,6 +78,21 @@ def register():
                     {"error": "vehicle requires model, class, plate_number"}
                 ), 400
 
+    elif utype == "admin":
+        email = (data.get("email") or "").strip()
+        organization = (data.get("organization") or "").strip()
+        if not email or not organization:
+            return jsonify(
+                {"error": "email and organization are required for admin"}
+            ), 400
+
+    elif utype == "consumer":
+        address = (data.get("address") or "").strip()
+        if not address:
+            return jsonify(
+                {"error": "address is required for consumer"}
+            ), 400
+
     # Insert user
     conn = get_db()
     cur = conn.cursor()
@@ -80,9 +100,24 @@ def register():
         cur.execute(
             """
             INSERT INTO users
-            (username, password_hash, first_name, last_name, contact_number, type,
-             farm_name, farm_location, business, location, license_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            (
+                username,
+                password_hash,
+                first_name,
+                last_name,
+                contact_number,
+                type,
+                farm_name,
+                farm_location,
+                business,
+                location,
+                license_id,
+                email,
+                organization,
+                address,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """,
             (
                 username,
@@ -96,6 +131,9 @@ def register():
                 business,
                 location,
                 license_id,
+                email,
+                organization,
+                address,
                 int(time.time()),
             ),
         )
@@ -113,7 +151,12 @@ def register():
                 INSERT INTO vehicles (user_id, model, class, plate_number)
                 VALUES (?, ?, ?, ?);
                 """,
-                (user_id, v["model"].strip(), v["class"].strip(), v["plate_number"].strip()),
+                (
+                    user_id,
+                    v["model"].strip(),
+                    v["class"].strip(),
+                    v["plate_number"].strip(),
+                ),
             )
         conn.commit()
 
@@ -147,6 +190,9 @@ def register():
                 "business": business,
                 "location": location,
                 "license_id": license_id,
+                "email": email,
+                "organization": organization,
+                "address": address,
             },
         }
     ), 201
