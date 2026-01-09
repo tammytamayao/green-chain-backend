@@ -1,0 +1,132 @@
+# db.py
+import sqlite3
+import time
+from config import DB_PATH
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Users table (includes all role-specific optional columns)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            contact_number TEXT NOT NULL,
+            type TEXT NOT NULL CHECK (type IN ('farmer','disposer','driver')),
+
+            -- farmer
+            farm_name TEXT,
+            farm_location TEXT,
+
+            -- disposer
+            business TEXT,
+            location TEXT,
+
+            -- driver
+            license_id TEXT,
+
+            created_at INTEGER NOT NULL
+        );
+        """
+    )
+
+    # Vehicles (only for drivers, owned by a user)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vehicles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            class TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
+        """
+    )
+
+    # Products (generic catalog of what can be supplied / demanded)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            variant TEXT NOT NULL,
+            type TEXT NOT NULL,
+            freshness TEXT NOT NULL,
+            class TEXT NOT NULL,
+            size TEXT NOT NULL
+        );
+        """
+    )
+
+    # Stalls (owned by disposers; user_id should refer to a disposer user)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stalls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stall_name TEXT NOT NULL,
+            stall_location TEXT NOT NULL,
+            representative TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
+        """
+    )
+
+    # Supplies (offers from farmers for a given product)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            price REAL NOT NULL,
+            farmer_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            FOREIGN KEY(farmer_id) REFERENCES users(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # Demands (requests from stalls for a given product)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            price REAL NOT NULL,
+            stall_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            FOREIGN KEY(stall_id) REFERENCES stalls(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # Stall inventory (current stock per stall & product)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stall_inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            stall_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            stock REAL NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY(stall_id) REFERENCES stalls(id),
+            UNIQUE(stall_id, product_id)
+        );
+        """
+    )
+
+    conn.commit()
+    conn.close()
