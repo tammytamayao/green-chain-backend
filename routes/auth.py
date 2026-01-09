@@ -63,7 +63,7 @@ def register():
             return jsonify(
                 {"error": "vehicles must be a non-empty list for driver"}
             ), 400
-        # basic validation of each vehicle
+
         for v in vehicles:
             if not all(
                 isinstance(v.get(k, ""), str) and v.get(k, "").strip()
@@ -150,3 +150,35 @@ def register():
             },
         }
     ), 201
+
+
+@auth_bp.post("/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not username or not password:
+        return jsonify({"error": "username and password are required"}), 400
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, username, password_hash
+        FROM users
+        WHERE username = ?;
+        """,
+        (username,),
+    )
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"error": "invalid username or password"}), 401
+
+    if not check_password_hash(row["password_hash"], password):
+        return jsonify({"error": "invalid username or password"}), 401
+
+    token = issue_token(row["id"], row["username"])
+    return jsonify({"token": token}), 200
