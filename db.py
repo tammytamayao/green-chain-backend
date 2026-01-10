@@ -150,5 +150,57 @@ def init_db():
         """
     )
 
+    # Orders: id, amount, method, delivery_id, stall_inventory_id, consumer_id
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount REAL NOT NULL,
+            method TEXT NOT NULL,
+            delivery_id INTEGER,
+            stall_inventory_id INTEGER NOT NULL,
+            consumer_id INTEGER NOT NULL,
+            FOREIGN KEY(delivery_id) REFERENCES deliveries(id),
+            FOREIGN KEY(stall_inventory_id) REFERENCES stall_inventory(id),
+            FOREIGN KEY(consumer_id) REFERENCES users(id)
+        );
+        """
+    )
+
+    # Feedbacks: id, notes, attachment, rating, order_id, request_id
+    # Either order_id or request_id (or both) can be NULL
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS feedbacks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notes TEXT NOT NULL,
+            attachment TEXT,
+            rating INTEGER,
+            order_id INTEGER,
+            request_id INTEGER,
+            FOREIGN KEY(order_id) REFERENCES orders(id),
+            FOREIGN KEY(request_id) REFERENCES requests(id)
+        );
+        """
+    )
+
+    # Deliveries: id, origin, destination, vehicle_id, order_id, request_id
+    # Either order_id or request_id (or both) can be NULL
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            vehicle_id INTEGER NOT NULL,
+            order_id INTEGER,
+            request_id INTEGER,
+            FOREIGN KEY(vehicle_id) REFERENCES vehicles(id),
+            FOREIGN KEY(order_id) REFERENCES orders(id),
+            FOREIGN KEY(request_id) REFERENCES requests(id)
+        );
+        """
+    )
+
     conn.commit()
     conn.close()
