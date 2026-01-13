@@ -8,7 +8,8 @@ from routes.auth import auth_bp
 from routes.user import user_bp
 from routes.products import product_bp
 from routes.stall_inventory import stall_inventory_bp
-from routes.demands import demand_bp  # <-- NEW
+from routes.demands import demand_bp
+from routes.supplies import supplies_bp
 
 
 def create_app():
@@ -25,6 +26,7 @@ def create_app():
     app.register_blueprint(product_bp)
     app.register_blueprint(stall_inventory_bp)
     app.register_blueprint(demand_bp)
+    app.register_blueprint(supplies_bp)
 
     return app
 

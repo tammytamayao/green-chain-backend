@@ -108,6 +108,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             price REAL NOT NULL,
             method TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'processing',
             supply_id INTEGER NOT NULL,
             demand_id INTEGER NOT NULL,
             FOREIGN KEY(supply_id) REFERENCES supplies(id),

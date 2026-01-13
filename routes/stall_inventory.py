@@ -1,4 +1,3 @@
-# routes/stall_inventory.py
 from flask import Blueprint, jsonify, request
 from db import get_db
 from auth_utils import auth_user
@@ -6,6 +5,33 @@ from auth_utils import auth_user
 stall_inventory_bp = Blueprint(
     "stall_inventory", __name__, url_prefix="/stall_inventory"
 )
+
+
+def _require_user(request):
+    """
+    Returns ((user_row, conn), None) if authenticated user of any type,
+    otherwise (None, (response, status)).
+    """
+    user_id, _ = auth_user(request)
+    if not user_id:
+        return None, (jsonify({"error": "unauthorized"}), 401)
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, username, type
+        FROM users
+        WHERE id = ?;
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None, (jsonify({"error": "user not found"}), 404)
+
+    return (row, conn), None
 
 
 def _require_disposer(request):
@@ -77,9 +103,11 @@ def _fetch_inventory_row(cur, inv_id):
             p.name AS product_name,
             p.variant AS product_variant,
             p.current_price AS current_price,
+            s.stall_name AS stall_name,
             COALESCE(COUNT(o.id), 0) AS orders_count
         FROM stall_inventory si
         JOIN products p ON si.product_id = p.id
+        JOIN stalls s ON si.stall_id = s.id
         LEFT JOIN orders o ON o.stall_inventory_id = si.id
         WHERE si.id = ?
         GROUP BY si.id;
@@ -104,6 +132,7 @@ def _inventory_row_to_dict(row):
         "freshness": row["freshness"],
         "class": row["class"],
         "orders_count": row["orders_count"],
+        "stall_name": row["stall_name"],
     }
 
 
@@ -112,45 +141,91 @@ def list_stall_inventory():
     """
     GET /stall_inventory
 
-    Returns the current disposer’s stall inventory, with product info,
-    per-variant price, and orders count per item.
+    For disposers:
+      - Returns ONLY the current disposer’s stall inventory.
+
+    For farmers:
+      - Returns ALL stalls' inventory (so farmers can see demand per stall).
+
+    For any other user type:
+      - 403 forbidden.
     """
-    ctx, error_resp = _require_disposer(request)
+    ctx, error_resp = _require_user(request)
     if error_resp:
         return error_resp
     (user_row, conn) = ctx
     cur = conn.cursor()
 
-    stall_id = _get_disposer_stall_id(cur, user_row["id"])
-    if stall_id is None:
-        conn.close()
-        return jsonify([]), 200
+    user_type = user_row["type"]
 
-    cur.execute(
-        """
-        SELECT
-            si.id,
-            si.stocks,
-            si.size,
-            si.type,
-            si.freshness,
-            si.class,
-            si.price AS variant_price,
-            si.product_id,
-            si.stall_id,
-            p.name AS product_name,
-            p.variant AS product_variant,
-            p.current_price AS current_price,
-            COALESCE(COUNT(o.id), 0) AS orders_count
-        FROM stall_inventory si
-        JOIN products p ON si.product_id = p.id
-        LEFT JOIN orders o ON o.stall_inventory_id = si.id
-        WHERE si.stall_id = ?
-        GROUP BY si.id
-        ORDER BY p.name, p.variant;
-        """,
-        (stall_id,),
-    )
+    # --- Disposer: existing behavior, scoped to their stall ---
+    if user_type == "disposer":
+        stall_id = _get_disposer_stall_id(cur, user_row["id"])
+        if stall_id is None:
+            conn.close()
+            return jsonify([]), 200
+
+        cur.execute(
+            """
+            SELECT
+                si.id,
+                si.stocks,
+                si.size,
+                si.type,
+                si.freshness,
+                si.class,
+                si.price AS variant_price,
+                si.product_id,
+                si.stall_id,
+                p.name AS product_name,
+                p.variant AS product_variant,
+                p.current_price AS current_price,
+                s.stall_name AS stall_name,
+                COALESCE(COUNT(o.id), 0) AS orders_count
+            FROM stall_inventory si
+            JOIN products p ON si.product_id = p.id
+            JOIN stalls s ON si.stall_id = s.id
+            LEFT JOIN orders o ON o.stall_inventory_id = si.id
+            WHERE si.stall_id = ?
+            GROUP BY si.id
+            ORDER BY p.name, p.variant;
+            """,
+            (stall_id,),
+        )
+
+    # --- Farmer: allow read-only view across all stalls ---
+    elif user_type == "farmer":
+        cur.execute(
+            """
+            SELECT
+                si.id,
+                si.stocks,
+                si.size,
+                si.type,
+                si.freshness,
+                si.class,
+                si.price AS variant_price,
+                si.product_id,
+                si.stall_id,
+                p.name AS product_name,
+                p.variant AS product_variant,
+                p.current_price AS current_price,
+                s.stall_name AS stall_name,
+                COALESCE(COUNT(o.id), 0) AS orders_count
+            FROM stall_inventory si
+            JOIN products p ON si.product_id = p.id
+            JOIN stalls s ON si.stall_id = s.id
+            LEFT JOIN orders o ON o.stall_inventory_id = si.id
+            GROUP BY si.id
+            ORDER BY p.name, p.variant, si.stall_id;
+            """
+        )
+
+    # --- Any other roles: forbidden ---
+    else:
+        conn.close()
+        return jsonify({"error": "forbidden"}), 403
+
     rows = cur.fetchall()
     conn.close()
 

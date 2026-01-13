@@ -8,6 +8,33 @@ demand_bp = Blueprint("demand", __name__, url_prefix="/demands")
 
 # ---------- Helpers ----------
 
+def _require_user(request):
+    """
+    Returns ((user_row, conn), None) if authenticated user of any type,
+    otherwise (None, (response, status)).
+    """
+    user_id, _ = auth_user(request)
+    if not user_id:
+        return None, (jsonify({"error": "unauthorized"}), 401)
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, username, type
+        FROM users
+        WHERE id = ?;
+        """,
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return None, (jsonify({"error": "user not found"}), 404)
+
+    return (row, conn), None
+
+
 def _require_disposer(request):
     """
     Returns ((user_row, conn), None) if authenticated disposer,
@@ -66,6 +93,9 @@ def _demand_row_to_dict(row):
         "product_id": row["product_id"],
         "product_name": row["product_name"],
         "product_variant": row["product_variant"],
+        "stall_name": row["stall_name"],
+        "current_price": row["current_price"],
+        "requests_count": row["requests_count"],
     }
 
 
@@ -76,36 +106,82 @@ def list_demands():
     """
     GET /demands
 
-    Returns all demand rows for the current disposer’s stall,
-    joined with product info.
+    For disposers:
+      - Returns all demand rows for the current disposer’s stall.
+
+    For farmers:
+      - Returns all demand rows for all stalls (so farmers can see where demand is).
+
+    Both are joined with products + stalls, and include:
+      - stall_name
+      - current_price
+      - requests_count (number of supply/requests linked to this demand)
     """
-    ctx, error_resp = _require_disposer(request)
+    ctx, error_resp = _require_user(request)
     if error_resp:
         return error_resp
     (user_row, conn) = ctx
     cur = conn.cursor()
 
-    stall_id = _get_disposer_stall_id(cur, user_row["id"])
-    if stall_id is None:
-        conn.close()
-        return jsonify([]), 200
+    user_type = user_row["type"]
 
-    cur.execute(
-        """
-        SELECT
-            d.id,
-            d.weight,
-            d.stall_id,
-            d.product_id,
-            p.name AS product_name,
-            p.variant AS product_variant
-        FROM demands d
-        JOIN products p ON d.product_id = p.id
-        WHERE d.stall_id = ?
-        ORDER BY p.name, p.variant;
-        """,
-        (stall_id,),
-    )
+    # Disposer: only own stall's demand
+    if user_type == "disposer":
+        stall_id = _get_disposer_stall_id(cur, user_row["id"])
+        if stall_id is None:
+            conn.close()
+            return jsonify([]), 200
+
+        cur.execute(
+            """
+            SELECT
+                d.id,
+                d.weight,
+                d.stall_id,
+                d.product_id,
+                p.name          AS product_name,
+                p.variant       AS product_variant,
+                p.current_price AS current_price,
+                s.stall_name    AS stall_name,
+                COALESCE(COUNT(r.id), 0) AS requests_count
+            FROM demands d
+            JOIN products p ON d.product_id = p.id
+            JOIN stalls   s ON d.stall_id = s.id
+            LEFT JOIN requests r ON r.demand_id = d.id
+            WHERE d.stall_id = ?
+            GROUP BY d.id
+            ORDER BY p.name, p.variant, s.stall_name;
+            """,
+            (stall_id,),
+        )
+
+    # Farmer: all stalls' demand
+    elif user_type == "farmer":
+        cur.execute(
+            """
+            SELECT
+                d.id,
+                d.weight,
+                d.stall_id,
+                d.product_id,
+                p.name          AS product_name,
+                p.variant       AS product_variant,
+                p.current_price AS current_price,
+                s.stall_name    AS stall_name,
+                COALESCE(COUNT(r.id), 0) AS requests_count
+            FROM demands d
+            JOIN products p ON d.product_id = p.id
+            JOIN stalls   s ON d.stall_id = s.id
+            LEFT JOIN requests r ON r.demand_id = d.id
+            GROUP BY d.id
+            ORDER BY p.name, p.variant, s.stall_name;
+            """
+        )
+
+    else:
+        conn.close()
+        return jsonify({"error": "forbidden"}), 403
+
     rows = cur.fetchall()
     conn.close()
 
@@ -126,8 +202,7 @@ def create_or_update_demand():
     - If a demand for (stall_id, product_id) already exists, UPDATE its weight.
     - Otherwise, INSERT a new demand row.
 
-    This matches the "Save request" interaction in the Buy tab
-    (one active request per product per stall).
+    Disposer-only.
     """
     ctx, error_resp = _require_disposer(request)
     if error_resp:
@@ -160,10 +235,11 @@ def create_or_update_demand():
 
     # Ensure product exists
     cur.execute(
-        "SELECT id FROM products WHERE id = ?;",
+        "SELECT id, current_price FROM products WHERE id = ?;",
         (product_id,),
     )
-    if not cur.fetchone():
+    product_row = cur.fetchone()
+    if not product_row:
         conn.close()
         return jsonify({"error": "product not found"}), 404
 
@@ -204,7 +280,7 @@ def create_or_update_demand():
         conn.commit()
         demand_id = cur.lastrowid
 
-    # Fetch row with product info
+    # Fetch row with product + stall info + requests_count
     cur.execute(
         """
         SELECT
@@ -212,19 +288,23 @@ def create_or_update_demand():
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name AS product_name,
-            p.variant AS product_variant
+            p.name          AS product_name,
+            p.variant       AS product_variant,
+            p.current_price AS current_price,
+            s.stall_name    AS stall_name,
+            COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id
-        WHERE d.id = ?;
+        JOIN stalls   s ON d.stall_id = s.id
+        LEFT JOIN requests r ON r.demand_id = d.id
+        WHERE d.id = ?
+        GROUP BY d.id;
         """,
         (demand_id,),
     )
     out = cur.fetchone()
     conn.close()
 
-    # You can distinguish new vs updated by checking row above,
-    # but frontend usually doesn't need that, so return 200 OK.
     return jsonify(_demand_row_to_dict(out)), 200
 
 
@@ -234,6 +314,7 @@ def get_demand(demand_id):
     GET /demands/<id>
 
     Fetch a single demand row for the current disposer (by stall ownership).
+    Includes requests_count.
     """
     ctx, error_resp = _require_disposer(request)
     if error_resp:
@@ -253,12 +334,18 @@ def get_demand(demand_id):
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name AS product_name,
-            p.variant AS product_variant
+            p.name          AS product_name,
+            p.variant       AS product_variant,
+            p.current_price AS current_price,
+            s.stall_name    AS stall_name,
+            COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id
+        JOIN stalls   s ON d.stall_id = s.id
+        LEFT JOIN requests r ON r.demand_id = d.id
         WHERE d.id = ?
-          AND d.stall_id = ?;
+          AND d.stall_id = ?
+        GROUP BY d.id;
         """,
         (demand_id, stall_id),
     )
@@ -280,7 +367,7 @@ def update_demand(demand_id):
       "weight": 60.0
     }
 
-    For now we only allow changing weight.
+    Disposer-only.
     """
     ctx, error_resp = _require_disposer(request)
     if error_resp:
@@ -335,7 +422,7 @@ def update_demand(demand_id):
     )
     conn.commit()
 
-    # Return updated row
+    # Return updated row with product + stall info + requests_count
     cur.execute(
         """
         SELECT
@@ -343,11 +430,17 @@ def update_demand(demand_id):
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name AS product_name,
-            p.variant AS product_variant
+            p.name          AS product_name,
+            p.variant       AS product_variant,
+            p.current_price AS current_price,
+            s.stall_name    AS stall_name,
+            COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id
-        WHERE d.id = ?;
+        JOIN stalls   s ON d.stall_id = s.id
+        LEFT JOIN requests r ON r.demand_id = d.id
+        WHERE d.id = ?
+        GROUP BY d.id;
         """,
         (demand_id,),
     )
@@ -361,6 +454,8 @@ def update_demand(demand_id):
 def delete_demand(demand_id):
     """
     DELETE /demands/<id>
+
+    Disposer-only.
     """
     ctx, error_resp = _require_disposer(request)
     if error_resp:
