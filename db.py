@@ -141,11 +141,12 @@ def init_db():
             type TEXT NOT NULL,
             freshness TEXT NOT NULL,
             class TEXT NOT NULL,
+            price REAL,
             product_id INTEGER NOT NULL,
             stall_id INTEGER NOT NULL,
             FOREIGN KEY(product_id) REFERENCES products(id),
             FOREIGN KEY(stall_id) REFERENCES stalls(id),
-            UNIQUE(stall_id, product_id)
+            UNIQUE(stall_id, product_id, size, type)
         );
         """
     )

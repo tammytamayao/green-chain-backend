@@ -6,7 +6,9 @@ from db import init_db
 from routes.system import system_bp
 from routes.auth import auth_bp
 from routes.user import user_bp
-from routes.products import product_bp  # <-- add this import
+from routes.products import product_bp
+from routes.stall_inventory import stall_inventory_bp
+from routes.demands import demand_bp  # <-- NEW
 
 
 def create_app():
@@ -20,7 +22,9 @@ def create_app():
     app.register_blueprint(system_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(user_bp)
-    app.register_blueprint(product_bp)  # <-- register products routes
+    app.register_blueprint(product_bp)
+    app.register_blueprint(stall_inventory_bp)
+    app.register_blueprint(demand_bp)
 
     return app
 
