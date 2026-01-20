@@ -94,6 +94,7 @@ def _demand_row_to_dict(row):
         "product_name": row["product_name"],
         "product_variant": row["product_variant"],
         "stall_name": row["stall_name"],
+        "stall_location": row["stall_location"],  # 👈 NEW
         "current_price": row["current_price"],
         "requests_count": row["requests_count"],
     }
@@ -114,6 +115,7 @@ def list_demands():
 
     Both are joined with products + stalls, and include:
       - stall_name
+      - stall_location
       - current_price
       - requests_count (number of supply/requests linked to this demand)
     """
@@ -139,10 +141,11 @@ def list_demands():
                 d.weight,
                 d.stall_id,
                 d.product_id,
-                p.name          AS product_name,
-                p.variant       AS product_variant,
-                p.current_price AS current_price,
-                s.stall_name    AS stall_name,
+                p.name           AS product_name,
+                p.variant        AS product_variant,
+                p.current_price  AS current_price,
+                s.stall_name     AS stall_name,
+                s.stall_location AS stall_location,
                 COALESCE(COUNT(r.id), 0) AS requests_count
             FROM demands d
             JOIN products p ON d.product_id = p.id
@@ -164,10 +167,11 @@ def list_demands():
                 d.weight,
                 d.stall_id,
                 d.product_id,
-                p.name          AS product_name,
-                p.variant       AS product_variant,
-                p.current_price AS current_price,
-                s.stall_name    AS stall_name,
+                p.name           AS product_name,
+                p.variant        AS product_variant,
+                p.current_price  AS current_price,
+                s.stall_name     AS stall_name,
+                s.stall_location AS stall_location,
                 COALESCE(COUNT(r.id), 0) AS requests_count
             FROM demands d
             JOIN products p ON d.product_id = p.id
@@ -288,10 +292,11 @@ def create_or_update_demand():
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name          AS product_name,
-            p.variant       AS product_variant,
-            p.current_price AS current_price,
-            s.stall_name    AS stall_name,
+            p.name           AS product_name,
+            p.variant        AS product_variant,
+            p.current_price  AS current_price,
+            s.stall_name     AS stall_name,
+            s.stall_location AS stall_location,
             COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id
@@ -334,10 +339,11 @@ def get_demand(demand_id):
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name          AS product_name,
-            p.variant       AS product_variant,
-            p.current_price AS current_price,
-            s.stall_name    AS stall_name,
+            p.name           AS product_name,
+            p.variant        AS product_variant,
+            p.current_price  AS current_price,
+            s.stall_name     AS stall_name,
+            s.stall_location AS stall_location,
             COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id
@@ -430,10 +436,11 @@ def update_demand(demand_id):
             d.weight,
             d.stall_id,
             d.product_id,
-            p.name          AS product_name,
-            p.variant       AS product_variant,
-            p.current_price AS current_price,
-            s.stall_name    AS stall_name,
+            p.name           AS product_name,
+            p.variant        AS product_variant,
+            p.current_price  AS current_price,
+            s.stall_name     AS stall_name,
+            s.stall_location AS stall_location,
             COALESCE(COUNT(r.id), 0) AS requests_count
         FROM demands d
         JOIN products p ON d.product_id = p.id

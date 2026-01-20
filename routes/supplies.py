@@ -3,6 +3,9 @@ from flask import Blueprint, jsonify, request
 from db import get_db
 from auth_utils import auth_user
 
+# 🔗 import the shared helper from requests.py
+from routes.requests import create_request_record
+
 supplies_bp = Blueprint("supplies", __name__, url_prefix="/supplies")
 
 
@@ -48,17 +51,6 @@ def _supply_row_to_dict(row):
     }
 
 
-def _request_row_to_dict(row):
-    return {
-        "id": row["id"],
-        "price": row["price"],
-        "method": row["method"],
-        "status": row["status"],     # <- NEW
-        "supply_id": row["supply_id"],
-        "demand_id": row["demand_id"],
-    }
-
-
 # ---------- Routes ----------
 
 @supplies_bp.post("")
@@ -79,13 +71,16 @@ def create_supply_and_request():
     - Validate product, demand
     - Create a row in supplies (for this farmer + product)
     - Create a linked row in requests (for that supply + demand)
-      with status='processing'.
-
-    Returns:
-    {
-      "supply": { ... },
-      "request": { ... }
-    }
+      with status='processing' using the shared helper.
+    - Returns:
+      {
+        "supply": { ... },
+        "request": {
+          id, price, method, status, supply_id, demand_id,
+          farm: {...},
+          stall: {...}
+        }
+      }
     """
     ctx, error_resp = _require_farmer(request)
     if error_resp:
@@ -186,20 +181,18 @@ def create_supply_and_request():
     )
     supply_id = cur.lastrowid
 
-    # ---- Insert into requests ----
-    # status defaults to 'processing', but we set it explicitly for clarity
-    cur.execute(
-        """
-        INSERT INTO requests (price, method, status, supply_id, demand_id)
-        VALUES (?, ?, 'processing', ?, ?);
-        """,
-        (price, method, supply_id, demand_id),
+    # ---- Insert into requests via shared helper (returns farm + stall info) ----
+    request_dict = create_request_record(
+        cur,
+        price=price,
+        method=method,
+        supply_id=supply_id,
+        demand_id=demand_id,
     )
-    request_id = cur.lastrowid
 
     conn.commit()
 
-    # ---- Fetch created rows for response ----
+    # ---- Fetch created supply row for response ----
     cur.execute(
         """
         SELECT id, weight, farmer_id, product_id
@@ -209,24 +202,13 @@ def create_supply_and_request():
         (supply_id,),
     )
     supply_row = cur.fetchone()
-
-    cur.execute(
-        """
-        SELECT id, price, method, status, supply_id, demand_id
-        FROM requests
-        WHERE id = ?;
-        """,
-        (request_id,),
-    )
-    request_row = cur.fetchone()
-
     conn.close()
 
     return (
         jsonify(
             {
                 "supply": _supply_row_to_dict(supply_row),
-                "request": _request_row_to_dict(request_row),
+                "request": request_dict,  # already includes farm + stall
             }
         ),
         201,
