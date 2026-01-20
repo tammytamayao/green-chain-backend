@@ -147,6 +147,9 @@ def list_stall_inventory():
     For farmers:
       - Returns ALL stalls' inventory (so farmers can see demand per stall).
 
+    For consumers:
+      - Returns ALL stalls' inventory (so consumers can shop from stalls).
+
     For any other user type:
       - 403 forbidden.
     """
@@ -193,8 +196,8 @@ def list_stall_inventory():
             (stall_id,),
         )
 
-    # --- Farmer: allow read-only view across all stalls ---
-    elif user_type == "farmer":
+    # --- Farmer & Consumer: allow read-only view across all stalls ---
+    elif user_type in ("farmer", "consumer"):
         cur.execute(
             """
             SELECT
@@ -230,6 +233,7 @@ def list_stall_inventory():
     conn.close()
 
     return jsonify([_inventory_row_to_dict(r) for r in rows]), 200
+
 
 
 @stall_inventory_bp.post("")
