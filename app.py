@@ -11,6 +11,7 @@ from routes.stall_inventory import stall_inventory_bp
 from routes.demands import demand_bp
 from routes.supplies import supplies_bp
 from routes.requests import requests_bp
+from routes.orders import orders_bp
 
 
 def create_app():
@@ -29,6 +30,7 @@ def create_app():
     app.register_blueprint(demand_bp)
     app.register_blueprint(supplies_bp)
     app.register_blueprint(requests_bp)
+    app.register_blueprint(orders_bp)
 
     return app
 

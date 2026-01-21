@@ -104,6 +104,7 @@ def _fetch_inventory_row(cur, inv_id):
             p.variant AS product_variant,
             p.current_price AS current_price,
             s.stall_name AS stall_name,
+            s.stall_location AS stall_location,
             COALESCE(COUNT(o.id), 0) AS orders_count
         FROM stall_inventory si
         JOIN products p ON si.product_id = p.id
@@ -133,6 +134,7 @@ def _inventory_row_to_dict(row):
         "class": row["class"],
         "orders_count": row["orders_count"],
         "stall_name": row["stall_name"],
+        "stall_location": row["stall_location"],  # 👈 added
     }
 
 
@@ -184,6 +186,7 @@ def list_stall_inventory():
                 p.variant AS product_variant,
                 p.current_price AS current_price,
                 s.stall_name AS stall_name,
+                s.stall_location AS stall_location,
                 COALESCE(COUNT(o.id), 0) AS orders_count
             FROM stall_inventory si
             JOIN products p ON si.product_id = p.id
@@ -214,6 +217,7 @@ def list_stall_inventory():
                 p.variant AS product_variant,
                 p.current_price AS current_price,
                 s.stall_name AS stall_name,
+                s.stall_location AS stall_location,
                 COALESCE(COUNT(o.id), 0) AS orders_count
             FROM stall_inventory si
             JOIN products p ON si.product_id = p.id
@@ -233,7 +237,6 @@ def list_stall_inventory():
     conn.close()
 
     return jsonify([_inventory_row_to_dict(r) for r in rows]), 200
-
 
 
 @stall_inventory_bp.post("")
