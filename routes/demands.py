@@ -500,3 +500,61 @@ def delete_demand(demand_id):
     conn.close()
 
     return ("", 204)
+
+@demand_bp.post("/<int:demand_id>/complete")
+def complete_demand(demand_id):
+    """
+    POST /demands/<id>/complete
+
+    Disposer-only.
+
+    Behavior:
+      - Ensure demand belongs to current disposer’s stall.
+      - Set all requests for this demand to status = 'completed'.
+      - Delete the demand itself so it no longer appears in /demands.
+    """
+    ctx, error_resp = _require_disposer(request)
+    if error_resp:
+        return error_resp
+    (user_row, conn) = ctx
+    cur = conn.cursor()
+
+    stall_id = _get_disposer_stall_id(cur, user_row["id"])
+    if stall_id is None:
+        conn.close()
+        return jsonify({"error": "no stall found for disposer"}), 400
+
+    # Ensure demand belongs to this stall
+    cur.execute(
+        """
+        SELECT id, stall_id
+        FROM demands
+        WHERE id = ?;
+        """,
+        (demand_id,),
+    )
+    row = cur.fetchone()
+    if not row or row["stall_id"] != stall_id:
+        conn.close()
+        return jsonify({"error": "demand not found"}), 404
+
+    # 1) Mark all related requests as completed
+    cur.execute(
+        """
+        UPDATE requests
+        SET status = 'completed'
+        WHERE demand_id = ?;
+        """,
+        (demand_id,),
+    )
+
+    # 2) Delete the demand row itself
+    cur.execute(
+        "DELETE FROM demands WHERE id = ?;",
+        (demand_id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({"ok": True}), 200
