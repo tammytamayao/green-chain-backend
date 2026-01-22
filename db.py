@@ -152,13 +152,15 @@ def init_db():
         """
     )
 
-    # Orders: id, amount, method, delivery_id, stall_inventory_id, consumer_id
+    # Orders: id, amount, method, status, delivery_id, stall_inventory_id, consumer_id
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             amount REAL NOT NULL,
             method TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'processing',
+            weight REAL,
             delivery_id INTEGER,
             stall_inventory_id INTEGER NOT NULL,
             consumer_id INTEGER NOT NULL,
