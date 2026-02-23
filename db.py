@@ -1,18 +1,19 @@
 # db.py
 import sqlite3
-import time
 from config import DB_PATH
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # ✅ SQLite foreign keys are OFF by default
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 def init_db():
     conn = get_db()
     cur = conn.cursor()
 
-    # Users table (includes all role-specific optional columns)
+    # ---------- USERS ----------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -47,21 +48,7 @@ def init_db():
         """
     )
 
-    # Vehicles (only for drivers, owned by a user)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS vehicles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            model TEXT NOT NULL,
-            class TEXT NOT NULL,
-            plate_number TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        """
-    )
-
-    # Products: id, name, variant, current_price
+    # ---------- PRODUCTS ----------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS products (
@@ -73,51 +60,7 @@ def init_db():
         """
     )
 
-    # Supplies: id, weight, farmer_id (FK), product_id (FK)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS supplies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            weight REAL NOT NULL,
-            farmer_id INTEGER NOT NULL,
-            product_id INTEGER NOT NULL,
-            FOREIGN KEY(farmer_id) REFERENCES users(id),
-            FOREIGN KEY(product_id) REFERENCES products(id)
-        );
-        """
-    )
-
-    # Demands: id, weight, stall_id (FK), product_id (FK)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS demands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            weight REAL NOT NULL,
-            stall_id INTEGER NOT NULL,
-            product_id INTEGER NOT NULL,
-            FOREIGN KEY(stall_id) REFERENCES stalls(id),
-            FOREIGN KEY(product_id) REFERENCES products(id)
-        );
-        """
-    )
-
-    # Requests: id, price, method, supply_id (FK), demand_id (FK)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            price REAL NOT NULL,
-            method TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'processing',
-            supply_id INTEGER NOT NULL,
-            demand_id INTEGER NOT NULL,
-            FOREIGN KEY(supply_id) REFERENCES supplies(id),
-            FOREIGN KEY(demand_id) REFERENCES demands(id)
-        );
-        """
-    )
-
-    # Stalls (owned by disposers; user_id should refer to a disposer user)
+    # ---------- STALLS ----------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS stalls (
@@ -131,8 +74,54 @@ def init_db():
         """
     )
 
-    # Stall inventory:
-    # id, stocks, size, type, freshness, class, product_id (FK), stall_id (FK)
+    # ---------- VEHICLES ----------
+    # NOTE: keeping column name "class" to match your existing code.
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vehicles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            model TEXT NOT NULL,
+            class TEXT NOT NULL,
+            plate_number TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
+        """
+    )
+
+    # ---------- SUPPLIES ----------
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            farmer_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            FOREIGN KEY(farmer_id) REFERENCES users(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # ---------- DEMANDS ----------
+    # ✅ Now has status (open/completed) and is NOT deleted when completed.
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS demands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weight REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            stall_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            FOREIGN KEY(stall_id) REFERENCES stalls(id),
+            FOREIGN KEY(product_id) REFERENCES products(id)
+        );
+        """
+    )
+
+    # ---------- STALL INVENTORY ----------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS stall_inventory (
@@ -152,7 +141,24 @@ def init_db():
         """
     )
 
-    # Orders: id, amount, method, status, delivery_id, stall_inventory_id, consumer_id
+    # ---------- REQUESTS ----------
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            price REAL NOT NULL,
+            method TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'processing',
+            supply_id INTEGER NOT NULL,
+            demand_id INTEGER NOT NULL,
+            FOREIGN KEY(supply_id) REFERENCES supplies(id),
+            FOREIGN KEY(demand_id) REFERENCES demands(id)
+        );
+        """
+    )
+
+    # ---------- ORDERS ----------
+    # ✅ Removed delivery_id to avoid circular FK.
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS orders (
@@ -160,19 +166,55 @@ def init_db():
             amount REAL NOT NULL,
             method TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'processing',
-            weight REAL,
-            delivery_id INTEGER,
+            weight REAL NOT NULL,
             stall_inventory_id INTEGER NOT NULL,
             consumer_id INTEGER NOT NULL,
-            FOREIGN KEY(delivery_id) REFERENCES deliveries(id),
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
             FOREIGN KEY(stall_inventory_id) REFERENCES stall_inventory(id),
             FOREIGN KEY(consumer_id) REFERENCES users(id)
         );
         """
     )
 
-    # Feedbacks: id, notes, attachment, rating, order_id, request_id
-    # Either order_id or request_id (or both) can be NULL
+    # ---------- DELIVERIES ----------
+    # ✅ Created only for an order OR a request.
+    # ✅ Unassigned initially: driver_id NULL, vehicle_id NULL, status='unassigned'
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin TEXT NOT NULL,
+            destination TEXT NOT NULL,
+
+            driver_id INTEGER,
+            vehicle_id INTEGER,
+
+            order_id INTEGER,
+            request_id INTEGER,
+
+            status TEXT NOT NULL DEFAULT 'unassigned'
+              CHECK (status IN ('unassigned','assigned','picked_up','in_transit','delivered','cancelled')),
+
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            assigned_at INTEGER,
+            picked_up_at INTEGER,
+            delivered_at INTEGER,
+
+            FOREIGN KEY(driver_id) REFERENCES users(id),
+            FOREIGN KEY(vehicle_id) REFERENCES vehicles(id),
+            FOREIGN KEY(order_id) REFERENCES orders(id),
+            FOREIGN KEY(request_id) REFERENCES requests(id),
+
+            CHECK (
+              (order_id IS NOT NULL AND request_id IS NULL)
+              OR
+              (order_id IS NULL AND request_id IS NOT NULL)
+            )
+        );
+        """
+    )
+
+    # ---------- FEEDBACKS ----------
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS feedbacks (
@@ -182,24 +224,6 @@ def init_db():
             rating INTEGER,
             order_id INTEGER,
             request_id INTEGER,
-            FOREIGN KEY(order_id) REFERENCES orders(id),
-            FOREIGN KEY(request_id) REFERENCES requests(id)
-        );
-        """
-    )
-
-    # Deliveries: id, origin, destination, vehicle_id, order_id, request_id
-    # Either order_id or request_id (or both) can be NULL
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS deliveries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            origin TEXT NOT NULL,
-            destination TEXT NOT NULL,
-            vehicle_id INTEGER NOT NULL,
-            order_id INTEGER,
-            request_id INTEGER,
-            FOREIGN KEY(vehicle_id) REFERENCES vehicles(id),
             FOREIGN KEY(order_id) REFERENCES orders(id),
             FOREIGN KEY(request_id) REFERENCES requests(id)
         );

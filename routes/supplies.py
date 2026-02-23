@@ -68,17 +68,20 @@ def create_supply_and_request():
 
     Behavior:
     - Auth as farmer
-    - Validate product, demand
+    - Validate product, demand (and demand.status must be 'open')
     - Create a row in supplies (for this farmer + product)
     - Create a linked row in requests (for that supply + demand)
       with status='processing' using the shared helper.
+    - ✅ Create an UNASSIGNED delivery for this request immediately,
+      so drivers can claim it on /deliveries?scope=unassigned
     - Returns:
       {
         "supply": { ... },
         "request": {
           id, price, method, status, supply_id, demand_id,
           farm: {...},
-          stall: {...}
+          stall: {...},
+          delivery: {...} | null
         }
       }
     """
@@ -146,7 +149,7 @@ def create_supply_and_request():
     # ---- Ensure demand exists and matches product ----
     cur.execute(
         """
-        SELECT id, weight, stall_id, product_id
+        SELECT id, weight, stall_id, product_id, status
         FROM demands
         WHERE id = ?;
         """,
@@ -156,6 +159,11 @@ def create_supply_and_request():
     if not demand_row:
         conn.close()
         return jsonify({"error": "demand not found"}), 404
+
+    # ✅ do not allow supplying a completed demand
+    if (demand_row["status"] or "").strip().lower() != "open":
+        conn.close()
+        return jsonify({"error": "demand is not open"}), 400
 
     if demand_row["product_id"] != product_id:
         conn.close()
@@ -190,6 +198,19 @@ def create_supply_and_request():
         demand_id=demand_id,
     )
 
+    # ✅ Create delivery immediately for this request (unassigned by default)
+    # Import inside to avoid circular imports at module load time.
+    from routes.deliveries import create_delivery_for_request
+
+    delivery_dict = create_delivery_for_request(cur, int(request_dict["id"]))
+    if not delivery_dict:
+        # nothing committed yet, safe to close and fail
+        conn.close()
+        return jsonify({"error": "failed to create delivery for request"}), 500
+
+    # Attach delivery into request payload (matches your Dart RequestWithContext.delivery)
+    request_dict["delivery"] = delivery_dict
+
     conn.commit()
 
     # ---- Fetch created supply row for response ----
@@ -208,7 +229,7 @@ def create_supply_and_request():
         jsonify(
             {
                 "supply": _supply_row_to_dict(supply_row),
-                "request": request_dict,  # already includes farm + stall
+                "request": request_dict,  # includes farm + stall (+ delivery)
             }
         ),
         201,

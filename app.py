@@ -12,7 +12,7 @@ from routes.demands import demand_bp
 from routes.supplies import supplies_bp
 from routes.requests import requests_bp
 from routes.orders import orders_bp
-
+from routes.deliveries import deliveries_bp
 
 def create_app():
     app = Flask(__name__)
@@ -31,6 +31,7 @@ def create_app():
     app.register_blueprint(supplies_bp)
     app.register_blueprint(requests_bp)
     app.register_blueprint(orders_bp)
+    app.register_blueprint(deliveries_bp)
 
     return app
 

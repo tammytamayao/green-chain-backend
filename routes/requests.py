@@ -167,6 +167,42 @@ def create_request_record(cur, *, price, method, supply_id, demand_id):
     return request_with_context_row_to_dict(row)
 
 
+# ---------- Delivery helper for accepted requests ----------
+
+def _maybe_create_delivery_for_request(cur, request_id: int):
+    """
+    Create an UNASSIGNED delivery for a request once it becomes 'accepted'.
+    Idempotent: if a delivery already exists for this request, returns it.
+    DOES NOT COMMIT.
+    """
+    # Already exists?
+    cur.execute(
+        "SELECT * FROM deliveries WHERE request_id = ? LIMIT 1;",
+        (request_id,),
+    )
+    existing = cur.fetchone()
+    if existing:
+        # keep response shape aligned with routes/deliveries.py
+        return {
+            "id": existing["id"],
+            "origin": existing["origin"],
+            "destination": existing["destination"],
+            "driver_id": existing["driver_id"],
+            "vehicle_id": existing["vehicle_id"],
+            "order_id": existing["order_id"],
+            "request_id": existing["request_id"],
+            "status": existing["status"],
+            "created_at": existing["created_at"],
+            "assigned_at": existing["assigned_at"],
+            "picked_up_at": existing["picked_up_at"],
+            "delivered_at": existing["delivered_at"],
+        }
+
+    # Create new delivery using shared helper
+    from routes.deliveries import create_delivery_for_request
+    return create_delivery_for_request(cur, request_id)
+
+
 # ---------- Routes ----------
 
 @requests_bp.post("")
@@ -201,9 +237,7 @@ def create_request():
 
     if not supply_id or not demand_id or price is None or not method:
         conn.close()
-        return jsonify(
-            {"error": "supply_id, demand_id, price, method are all required"}
-        ), 400
+        return jsonify({"error": "supply_id, demand_id, price, method are all required"}), 400
 
     try:
         price = float(price)
@@ -251,16 +285,12 @@ def create_request():
         return jsonify({"error": "demand not found"}), 404
     if demand_row["product_id"] != supply_row["product_id"]:
         conn.close()
-        return jsonify(
-            {"error": "demand.product_id does not match supply.product_id"}
-        ), 400
+        return jsonify({"error": "demand.product_id does not match supply.product_id"}), 400
 
     # Optional: ensure supply weight <= demand weight
     if supply_row["weight"] > demand_row["weight"]:
         conn.close()
-        return jsonify(
-            {"error": "supplied weight cannot exceed demanded weight"}
-        ), 400
+        return jsonify({"error": "supplied weight cannot exceed demanded weight"}), 400
 
     request_dict = create_request_record(
         cur,
@@ -292,26 +322,24 @@ def list_requests():
     user_type = user_row["type"]
 
     if user_type == "farmer":
-        # Requests where supply belongs to this farmer
+        # ✅ No redundant join needed; s is already joined in _REQUEST_BASE_SELECT
         cur.execute(
             _REQUEST_BASE_SELECT + """
-            JOIN supplies s2 ON r.supply_id = s2.id
-            WHERE s2.farmer_id = ?
+            WHERE s.farmer_id = ?
             ORDER BY r.id DESC;
             """,
             (user_row["id"],),
         )
     elif user_type == "disposer":
-        # Requests where demand belongs to this disposer’s stall
         stall_id = _get_disposer_stall_id(cur, user_row["id"])
         if stall_id is None:
             conn.close()
             return jsonify([]), 200
 
+        # ✅ No redundant join needed; d is already joined in _REQUEST_BASE_SELECT
         cur.execute(
             _REQUEST_BASE_SELECT + """
-            JOIN demands d2 ON r.demand_id = d2.id
-            WHERE d2.stall_id = ?
+            WHERE d.stall_id = ?
             ORDER BY r.id DESC;
             """,
             (stall_id,),
@@ -346,9 +374,8 @@ def get_request(request_id):
     if user_type == "farmer":
         cur.execute(
             _REQUEST_BASE_SELECT + """
-            JOIN supplies s2 ON r.supply_id = s2.id
             WHERE r.id = ?
-              AND s2.farmer_id = ?;
+              AND s.farmer_id = ?;
             """,
             (request_id, user_row["id"]),
         )
@@ -360,9 +387,8 @@ def get_request(request_id):
 
         cur.execute(
             _REQUEST_BASE_SELECT + """
-            JOIN demands d2 ON r.demand_id = d2.id
             WHERE r.id = ?
-              AND d2.stall_id = ?;
+              AND d.stall_id = ?;
             """,
             (request_id, stall_id),
         )
@@ -389,7 +415,15 @@ def update_request_status(request_id):
     }
 
     Disposer-only: can change status of requests belonging to their stall.
-    Returns updated request with farm + stall.
+
+    ✅ NEW behavior:
+    - When status becomes 'accepted', create an UNASSIGNED delivery for this request
+      (driver will claim later).
+    - Response returns:
+      {
+        ...requestWithFarmAndStall,
+        "delivery": <delivery or null>
+      }
     """
     ctx, error_resp = _require_disposer(request)
     if error_resp:
@@ -411,14 +445,12 @@ def update_request_status(request_id):
 
     if status not in ALLOWED_STATUS:
         conn.close()
-        return jsonify(
-            {"error": f"status must be one of {', '.join(ALLOWED_STATUS)}"}
-        ), 400
+        return jsonify({"error": f"status must be one of {', '.join(ALLOWED_STATUS)}"}), 400
 
     # Ensure request belongs to this stall (via demand)
     cur.execute(
         """
-        SELECT r.id
+        SELECT r.id, r.status
         FROM requests r
         JOIN demands d ON r.demand_id = d.id
         WHERE r.id = ?
@@ -431,6 +463,8 @@ def update_request_status(request_id):
         conn.close()
         return jsonify({"error": "request not found"}), 404
 
+    prev_status = row["status"]
+
     cur.execute(
         """
         UPDATE requests
@@ -440,6 +474,14 @@ def update_request_status(request_id):
         (status, request_id),
     )
 
+    delivery = None
+    # ✅ Create delivery only when moving into "accepted"
+    if status == "accepted" and prev_status != "accepted":
+        delivery = _maybe_create_delivery_for_request(cur, request_id)
+        if not delivery:
+            conn.close()
+            return jsonify({"error": "failed to create delivery for request"}), 500
+
     cur.execute(
         _REQUEST_BASE_SELECT + """
         WHERE r.id = ?;
@@ -447,10 +489,13 @@ def update_request_status(request_id):
         (request_id,),
     )
     updated = cur.fetchone()
+
     conn.commit()
     conn.close()
 
-    return jsonify(request_with_context_row_to_dict(updated)), 200
+    out = request_with_context_row_to_dict(updated)
+    out["delivery"] = delivery  # may be None unless accepted transition
+    return jsonify(out), 200
 
 
 @requests_bp.delete("/<int:request_id>")
@@ -487,14 +532,9 @@ def delete_request(request_id):
 
     if row["status"] != "processing":
         conn.close()
-        return jsonify(
-            {"error": "only 'processing' requests can be deleted"}
-        ), 400
+        return jsonify({"error": "only 'processing' requests can be deleted"}), 400
 
-    cur.execute(
-        "DELETE FROM requests WHERE id = ?;",
-        (request_id,),
-    )
+    cur.execute("DELETE FROM requests WHERE id = ?;", (request_id,))
     conn.commit()
     conn.close()
 

@@ -72,6 +72,7 @@ def me():
         cur.execute(
             """
             SELECT
+                id,
                 model,
                 class,
                 plate_number
@@ -82,6 +83,7 @@ def me():
         )
         vehicles = [
             {
+                "id": v["id"],
                 "model": v["model"],
                 "class": v["class"],
                 "plate_number": v["plate_number"],
